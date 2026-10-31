@@ -1,0 +1,26 @@
+name: serene
+description: Free, private AI wellness companion (ar/fr/en).
+publish_to: none
+version: 0.1.0+1
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  http: ^1.2.0
+  flutter_secure_storage: ^9.2.2
+  url_launcher: ^6.3.0
+  local_auth: ^3.0.2
+  flutter_local_notifications: ^22.3.3
+  crypto: ^3.0.8
+  timezone: ^0.11.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
