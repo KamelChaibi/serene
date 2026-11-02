@@ -7,7 +7,16 @@
 
 const http = require('http');
 
-const API_KEY = process.env.OPENROUTER_API_KEY || process.env.API_KEY || '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';
+const API_KEY = process.env.OPENROUTER_API_KEY || process.env.API_KEY;
+
+if (!API_KEY || API_KEY.includes('your-key-here')) {
+  console.error(
+    'OPENROUTER_API_KEY is required. Copy backend/.env.example to backend/.env, ' +
+      'set your key, then run: node --env-file=.env server.js',
+  );
+  process.exit(1);
+}
+
 const MODEL = process.env.MODEL || 'nvidia/nemotron-3-ultra-550b-a55b:free';
 
 const SYSTEM_PROMPT = `You are Serene, a warm, deeply compassionate, and non-judgmental AI mental wellness companion.

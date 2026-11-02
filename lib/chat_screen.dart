@@ -142,6 +142,11 @@ class _ChatScreenState extends State<ChatScreen> {
       _currentStreamSub = stream.listen(
         (chunk) {
           if (!mounted) return;
+          if (chunk.error != null && assistantMsg.text.isEmpty) {
+            setState(() {
+              assistantMsg.text = s.t('error');
+            });
+          }
           if (chunk.token.isNotEmpty) {
             setState(() {
               assistantMsg.text += chunk.token;

@@ -6,6 +6,7 @@ android/local.properties
 backend/node_modules/
 
 # Local secrets, weights and runtime state — never commit.
+backend/.env
 voice_backend/.env
 voice_backend/data/
 voice_backend/models/

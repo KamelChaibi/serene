@@ -19,18 +19,19 @@ It is currently available for **Android** in **Arabic (العربية)**, **Fren
 
 ### Android APK
 
-[![Download Serene v1.0.0 APK](https://img.shields.io/badge/Download-Serene%20v1.0.0%20APK-2EA44F?style=for-the-badge&logo=android&logoColor=white)](https://github.com/KamelChaibi/serene/releases/download/v1.0.0/Serene-v1.0.0.apk)
+[![Download Serene v1.0.0 APK](https://img.shields.io/badge/Download-Serene%20v1.0.0%20APK-2EA44F?style=for-the-badge&logo=android&logoColor=white)](download/Serene-v1.0.0.apk)
 
-Can't use the button? [Download `Serene-v1.0.0.apk` directly](https://github.com/KamelChaibi/serene/releases/download/v1.0.0/Serene-v1.0.0.apk).
+[Download `Serene-v1.0.0.apk`](download/Serene-v1.0.0.apk) · [direct download](https://github.com/KamelChaibi/serene/raw/main/download/Serene-v1.0.0.apk)
 
 | Info | Details |
 | --- | --- |
-| **File** | `Serene-v1.0.0.apk` |
+| **File** | [`download/Serene-v1.0.0.apk`](download/Serene-v1.0.0.apk) |
 | **Version** | `1.0.0` |
 | **Size** | ~90.2 MB |
 | **Minimum Android** | 7.0 (API 24) |
 | **Internet** | Required for AI chat; offline tools work without a connection |
 | **Distribution** | Direct APK (sideload) |
+| **SHA-256** | `3392163df23b586a9cbd3d41090fb865702075ba1e3e1c7176ef9ba18c83aa04` |
 | **PWA** | Not available at this time |
 
 ### Installation Instructions
@@ -40,7 +41,23 @@ Can't use the button? [Download `Serene-v1.0.0.apk` directly](https://github.com
 3. If prompted, allow installation from your browser/file manager (`Settings > Apps > [App Name] > Install unknown apps`).
 4. Tap **Install** and launch **Serene**.
 
-> **Note:** Serene is not currently published on the Google Play Store. You can always find the latest official releases on the [GitHub Releases page](https://github.com/KamelChaibi/serene/releases).
+To verify the file after downloading, compare its SHA-256 checksum with
+[`download/SHA256SUMS.txt`](download/SHA256SUMS.txt):
+
+```bash
+# Linux / macOS
+sha256sum Serene-v1.0.0.apk
+```
+
+```powershell
+# Windows (PowerShell)
+Get-FileHash .\Serene-v1.0.0.apk -Algorithm SHA256
+```
+
+> **Note:** Serene is not currently published on the Google Play Store. The APK
+> in [`download/`](download) is the current official build; previous and future
+> builds may also be attached to the
+> [GitHub Releases page](https://github.com/KamelChaibi/serene/releases).
 
 ---
 
@@ -96,7 +113,7 @@ Can't use the button? [Download `Serene-v1.0.0.apk` directly](https://github.com
 
 ### Prerequisites
 - Flutter SDK `>= 3.4.0`
-- Node.js `>= 18` (for the text chat proxy)
+- Node.js `>= 20.6` (for the text chat proxy and `--env-file` support)
 - Android SDK (minSdk 24)
 - For voice calls: an NVIDIA GPU (8 GB+), Docker, and the `voice_backend` stack
 
@@ -105,11 +122,24 @@ Can't use the button? [Download `Serene-v1.0.0.apk` directly](https://github.com
 > [Voice calls](#-voice-calls-self-hosted) below.
 
 ### Running the Backend Proxy
+
+The proxy has no npm dependencies; it runs on Node's built-in HTTP server.
+
 ```bash
 cd backend
-npm install
-ANTHROPIC_API_KEY="sk-ant-..." PORT=8787 node server.js
+cp .env.example .env      # then edit .env and set OPENROUTER_API_KEY
+node --env-file=.env server.js
 ```
+
+Alternatively, pass the key directly in the environment:
+
+```bash
+cd backend
+OPENROUTER_API_KEY="sk-or-..." PORT=8787 node server.js
+```
+
+The server refuses to start when `OPENROUTER_API_KEY` is missing. Keys are read
+from the server environment only — never from the mobile app.
 
 ### Running the Android Client
 ```bash
@@ -131,9 +161,18 @@ flutter build apk --release \
 ```
 
 The universal APK is written to
-`build/app/outputs/flutter-apk/app-release.apk`. Rename it to
-`Serene-v<version>.apk`, verify it on a physical device, and attach it to a
-GitHub Release so the download link above stays valid.
+`build/app/outputs/flutter-apk/app-release.apk`. To publish a new build from the
+repository, rename it to `Serene-v<version>.apk`, copy it into
+[`download/`](download), refresh [`download/SHA256SUMS.txt`](download/SHA256SUMS.txt),
+and update the download links at the top of this README.
+
+> Keep `download/` in sync with the released version. For larger projects, prefer
+> attaching the APK to a GitHub Release instead of committing it, since every
+> binary added to the repository increases clone size permanently.
+
+> The APK contains **no provider API keys**. Only the public `API_URL` is
+> compiled in. If the proxy is unreachable, chat shows a connection error; the
+> offline breathing, grounding, mood and journal tools keep working.
 
 > Release builds require a signing configuration. See the
 > [Flutter deployment guide](https://docs.flutter.dev/deployment/android#signing-the-app)
@@ -258,14 +297,19 @@ claims to be a human or a therapist.
   cleartext (see `android/app/src/main/res/xml/network_security_config.xml`).
   Put the backend behind HTTPS before exposing it to the internet.
 
-### Known security debt in the existing text chat (unchanged)
+### API keys and the text chat
 
-`lib/chat_service.dart` still ships a default `OPENROUTER_API_KEY` value and a
-direct-OpenRouter streaming fallback. A key compiled into an APK can be
-extracted, so treat that key as public: rotate it, and prefer routing text chat
-through the proxy with `--dart-define=API_URL=...`. This was left as-is to
-avoid changing unrelated behaviour, and it does not affect the voice path,
-which never uses a client-side key.
+`lib/chat_service.dart` no longer contains a bundled API key or a direct
+OpenRouter fallback. All text chat goes through the privacy proxy configured
+with `API_URL`, so provider credentials stay on the server and cannot be
+extracted from the APK. If the proxy is unreachable, the app shows a clear
+connection error instead of sending requests with a client-side key.
+
+`backend/server.js` reads `OPENROUTER_API_KEY` from the environment and refuses
+to start without it. Copy `backend/.env.example` to `backend/.env` (ignored by
+Git) and keep the real key there. If a key was ever committed or shipped in an
+APK, rotate it: deleting it from the current file does not remove it from Git
+history or from previously distributed builds.
 
 ---
 
@@ -274,7 +318,7 @@ which never uses a client-side key.
 **Verified in the development environment (Windows 11, no GPU, no Docker daemon, no physical Android device):**
 
 * `flutter analyze` — clean, no issues.
-* `flutter test` — **61 tests pass**, including the new voice tests (server-URL and language normalisation, token-expiry handling, the agent data protocol, localisation completeness for every voice string in English/French/Arabic, and widget tests for "connect → reply appears → end call", "microphone denied shows instructions", "a dropped call offers a retry", and "connected but no agent answers"), storage tests proving that personal keys never reach the secure-storage plugin, that the allowlisted preferences do, that a wipe clears both while keeping the voice enrolment, that a legacy profile left on disk is never displayed, that old personal keys are purged at start-up, and that a first launch in French points hotlines at France, plus a test that the hidden voice-call entry points stay out of the chat UI.
+* `flutter test` — **74 tests pass**, including the new voice tests (server-URL and language normalisation, token-expiry handling, the agent data protocol, localisation completeness for every voice string in English/French/Arabic, and widget tests for "connect → reply appears → end call", "microphone denied shows instructions", "a dropped call offers a retry", and "connected but no agent answers"), storage tests proving that personal keys never reach the secure-storage plugin, that the allowlisted preferences do, that a wipe clears both while keeping the voice enrolment, that a legacy profile left on disk is never displayed, that old personal keys are purged at start-up, and that a first launch in French points hotlines at France, plus a test that the hidden voice-call entry points stay out of the chat UI.
 * `flutter build apk --debug` — builds a real APK with `livekit_client` 2.13.2 and `permission_handler` 12.0.3.
 * The merged Android manifest contains `RECORD_AUDIO`, `MODIFY_AUDIO_SETTINGS`, `INTERNET`, `ACCESS_NETWORK_STATE`, `BLUETOOTH`/`BLUETOOTH_CONNECT`, and the network security config.
 * `voice_backend` — all modules compile and **95 unit tests pass** (crisis regexes, prompt building and bounding, device enrolment/authentication/rate limits, token claims and agent dispatch, API payload bounding, STT/TTS helpers, and the startup guard that refuses placeholder LiveKit secrets).
