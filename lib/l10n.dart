@@ -229,6 +229,11 @@ const Map<String, Map<String, String>> _strings = {
         'Notifications are turned off for Serene. Enable them in your phone settings.',
     'notificationsFailed': 'Could not schedule the reminder. Please try again.',
 
+    // PWA install hint (iOS)
+    'installTitle': 'Install on your iPhone',
+    'installBody':
+        'Tap Share in Safari, then "Add to Home Screen". Serene then opens full-screen and keeps working offline.',
+
     // Automatic Memory Suggestions
     'memorySuggestionTitle': '💡 Would you like Serene to remember this?',
     'remember': 'Remember',
@@ -567,6 +572,11 @@ const Map<String, Map<String, String>> _strings = {
         'Les notifications sont désactivées pour Serene. Activez-les dans les réglages de votre téléphone.',
     'notificationsFailed': 'Impossible de programmer le rappel. Réessayez.',
 
+    // PWA install hint (iOS)
+    'installTitle': 'Installer sur votre iPhone',
+    'installBody':
+        'Touchez Partager dans Safari, puis « Sur l\'écran d\'accueil ». Serene s\'ouvre alors en plein écran et fonctionne hors ligne.',
+
     // Automatic Memory Suggestions
     'memorySuggestionTitle': '💡 Serene doit-elle se souvenir de cela ?',
     'remember': 'Mémoriser',
@@ -885,6 +895,11 @@ const Map<String, Map<String, String>> _strings = {
     'notificationsBlocked':
         'الإشعارات متوقفة لتطبيق Serene. فعّلها من إعدادات هاتفك.',
     'notificationsFailed': 'تعذّر جدولة التذكير. حاول مرة أخرى.',
+
+    // PWA install hint (iOS)
+    'installTitle': 'ثبّت التطبيق على iPhone',
+    'installBody':
+        'اضغط زر المشاركة في Safari ثم اختر «إضافة إلى الشاشة الرئيسية». سيعمل Serene بملء الشاشة ويظل متاحًا بدون إنترنت.',
 
     // Automatic Memory Suggestions
     'memorySuggestionTitle': '💡 هل ترغب أن تتذكر Serene هذه المعلومة؟',

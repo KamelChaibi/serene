@@ -19,6 +19,9 @@ class NotificationService {
   bool _isInitialized = false;
 
   Future<void> init() async {
+    // The browser build has no native local-notification plugin; the reminder
+    // UI is hidden there, and every entry point below also checks kIsWeb.
+    if (kIsWeb) return;
     if (_isInitialized) return;
 
     tz.initializeTimeZones();
@@ -174,6 +177,7 @@ class NotificationService {
     String title = defaultTitle,
     String body = defaultBody,
   }) async {
+    if (kIsWeb) return;
     await init();
     await _schedule(hour: hour, minute: minute, title: title, body: body);
 
@@ -187,6 +191,7 @@ class NotificationService {
   /// Re-creates the daily schedule on start-up so a timezone or DST change is
   /// picked up even if the user never opens the reminder settings again.
   Future<void> restoreScheduleIfEnabled() async {
+    if (kIsWeb) return;
     await init();
     if (!await isReminderEnabled()) return;
 
@@ -207,6 +212,7 @@ class NotificationService {
     required String title,
     required String body,
   }) async {
+    if (kIsWeb) return;
     // Only this app's notifications are replaced; the enabled flag is left
     // alone so a failed schedule cannot silently report "on".
     await _notifications.cancelAll();
@@ -268,6 +274,7 @@ class NotificationService {
     String title = 'Serene',
     String body = 'You are safe. Take a slow breath with me.',
   }) async {
+    if (kIsWeb) return;
     await init();
     const androidDetails = AndroidNotificationDetails(
       'serene_instant',
@@ -290,6 +297,10 @@ class NotificationService {
   }
 
   Future<void> cancelAll() async {
+    if (kIsWeb) {
+      await Store.setString('reminder_enabled', 'false');
+      return;
+    }
     await init();
     await _notifications.cancelAll();
     await Store.setString('reminder_enabled', 'false');

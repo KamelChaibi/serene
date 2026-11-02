@@ -9,6 +9,8 @@ dependencies:
     sdk: flutter
   flutter_localizations:
     sdk: flutter
+  # Browser APIs for the web/PWA build (install hint, standalone detection).
+  web: ^1.1.1
   http: ^1.2.0
   flutter_secure_storage: ^9.2.2
   url_launcher: ^6.3.0

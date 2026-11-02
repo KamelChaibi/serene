@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -8,6 +9,7 @@ import 'l10n.dart';
 import 'notification_service.dart';
 import 'onboarding.dart';
 import 'profile.dart';
+import 'pwa_install_card.dart';
 import 'responsive.dart';
 import 'safety.dart';
 import 'security_service.dart';
@@ -1401,6 +1403,9 @@ class _MemorySettingsScreenState extends State<MemorySettingsScreen> {
               const SizedBox(height: 16),
             ],
 
+            // iOS has no automatic install prompt; offer the manual steps.
+            const PwaInstallCard(),
+
             // 1. PIN & Biometrics Security Section
             Card(
               elevation: 0,
@@ -1482,7 +1487,10 @@ class _MemorySettingsScreenState extends State<MemorySettingsScreen> {
             const SizedBox(height: 16),
 
             // 2. Mindful Daily Reminders & Notifications
-            Card(
+            // The web build cannot schedule native local notifications, so
+            // this section is only offered on Android/iOS.
+            if (!kIsWeb)
+              Card(
               elevation: 0,
               color: theme.colorScheme.surfaceContainerHighest
                   .withValues(alpha: 0.4),

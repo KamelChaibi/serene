@@ -1,8 +1,58 @@
 # Serene – 100% Free, Private AI Mental Wellness Companion
 
-> **"You do not have to carry this alone."**
+> *"You do not have to carry this alone."*
 
-Serene is an open-source, zero-knowledge, empathetic mental wellness companion designed to support people experiencing anxiety, depression, loneliness, grief, and emotional overwhelm. Initially available on Android in **Arabic (العربية)**, **French (Français)**, and **English** — with **French as the default first-run language** — Serene acts as a calm, trusted, non-judgmental presence in the user's pocket.
+[![Platform](https://img.shields.io/badge/Platform-Android-3DDC84?logo=android&logoColor=white)](#-download)
+[![Languages](https://img.shields.io/badge/Languages-Arabic%20%7C%20French%20%7C%20English-blue)](#-key-features)
+[![Privacy](https://img.shields.io/badge/Privacy-Zero--Knowledge%20%7C%20In--RAM-6f42c1)](#3-absolute-privacy--zero-knowledge-architecture)
+[![License](https://img.shields.io/badge/License-Open%20Source-lightgrey)](#-open-source--ethical-mission)
+
+**Serene** is an open-source, zero-knowledge, empathetic mental wellness companion designed to support people experiencing anxiety, depression, loneliness, grief, and emotional overwhelm.
+
+It is currently available for **Android** in **Arabic (العربية)**, **French (Français)**, and **English** — with **French** set as the default first-run language. Serene aims to be a calm, trusted, and non-judgmental presence right in your pocket.
+
+**➡️ [Download the latest Android APK](#-download)**
+
+---
+
+## 📥 Download
+
+### Android APK
+
+[![Download Serene v1.0.0 APK](https://img.shields.io/badge/Download-Serene%20v1.0.0%20APK-2EA44F?style=for-the-badge&logo=android&logoColor=white)](https://github.com/KamelChaibi/serene/releases/download/v1.0.0/Serene-v1.0.0.apk)
+
+Can't use the button? [Download `Serene-v1.0.0.apk` directly](https://github.com/KamelChaibi/serene/releases/download/v1.0.0/Serene-v1.0.0.apk).
+
+| Info | Details |
+| --- | --- |
+| **File** | `Serene-v1.0.0.apk` |
+| **Version** | `1.0.0` |
+| **Size** | ~90.2 MB |
+| **Minimum Android** | 7.0 (API 24) |
+| **Internet** | Required for AI chat; offline tools work without a connection |
+| **Distribution** | Direct APK (sideload) |
+| **PWA** | Not available at this time |
+
+### Installation Instructions
+
+1. Download the APK from the button above.
+2. On your Android device, open the downloaded file from your Files app or browser.
+3. If prompted, allow installation from your browser/file manager (`Settings > Apps > [App Name] > Install unknown apps`).
+4. Tap **Install** and launch **Serene**.
+
+> **Note:** Serene is not currently published on the Google Play Store. You can always find the latest official releases on the [GitHub Releases page](https://github.com/KamelChaibi/serene/releases).
+
+---
+
+## 📖 Contents
+
+- [Download](#-download)
+- [Key Features](#-key-features)
+- [Build from Source](#-build-from-source)
+- [Voice Calls (Self-Hosted)](#-voice-calls-self-hosted)
+- [Tested vs. Untested](#-tested-vs-untested-honest-report)
+- [Clinical & Legal Checklist](#-clinical--legal-checklist-before-public-release)
+- [Open Source & Ethical Mission](#-open-source--ethical-mission)
 
 ---
 
@@ -42,7 +92,7 @@ Serene is an open-source, zero-knowledge, empathetic mental wellness companion d
 
 ---
 
-## 🚀 Getting Started
+## 🛠️ Build from Source
 
 ### Prerequisites
 - Flutter SDK `>= 3.4.0`
@@ -69,6 +119,39 @@ flutter run \
   --dart-define=VOICE_API_URL=http://10.0.2.2:8788
 ```
 *(Use `http://10.0.2.2:...` on the Android Emulator or your host's LAN IP on a physical device. Once voice calls are enabled with `voiceCallsVisible`, the address can also be changed at runtime in **Settings → Voice call settings**.)*
+
+### Building the Release APK
+
+The distributed APK is a standard Flutter release build. Point `API_URL` at your
+production text-chat proxy, then build:
+
+```bash
+flutter build apk --release \
+  --dart-define=API_URL=https://your-backend.example/chat
+```
+
+The universal APK is written to
+`build/app/outputs/flutter-apk/app-release.apk`. Rename it to
+`Serene-v<version>.apk`, verify it on a physical device, and attach it to a
+GitHub Release so the download link above stays valid.
+
+> Release builds require a signing configuration. See the
+> [Flutter deployment guide](https://docs.flutter.dev/deployment/android#signing-the-app)
+> if `android/key.properties` is not yet set up for your environment.
+
+### Web build (not currently distributed)
+
+The repository contains a Flutter web target, but **Serene is not distributed as a
+PWA at this time**. The supported end-user build is the Android APK above.
+
+Developers can still run the web target locally for UI work:
+
+```bash
+flutter run -d chrome --dart-define=API_URL=http://localhost:8787/chat
+```
+
+The web target is not an officially supported release channel, so no installation
+or hosting instructions are provided here.
 
 ### Testing & Linting
 ```bash
