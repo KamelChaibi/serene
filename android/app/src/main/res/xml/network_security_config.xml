@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cleartext HTTP is allowed because Serene's voice backend is self-hosted and
+  is normally reached over the local network (for example
+  http://192.168.1.10:8788). Android blocks cleartext by default since API 28,
+  so without this the app could not talk to a LAN server at all.
+
+  Audio itself never travels over this HTTP connection: it goes through
+  LiveKit's WebRTC transport (DTLS-SRTP). What *does* travel in cleartext is
+  the per-install device secret used to mint short-lived room tokens, so on an
+  untrusted network anyone who can sniff traffic could impersonate this
+  install until the secret is rotated with "Forget this device".
+
+  If you expose the backend to the internet, put it behind HTTPS (Caddy,
+  Traefik, or a tunnel) and set `cleartextTrafficPermitted="false"` here.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

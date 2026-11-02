@@ -10,7 +10,7 @@ const http = require('http');
 const API_KEY = process.env.OPENROUTER_API_KEY || process.env.API_KEY || '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';
 const MODEL = process.env.MODEL || 'nvidia/nemotron-3-ultra-550b-a55b:free';
 
-const SYSTEM_PROMPT = `You are Serene (سكينة), a warm, deeply compassionate, and non-judgmental AI mental wellness companion.
+const SYSTEM_PROMPT = `You are Serene, a warm, deeply compassionate, and non-judgmental AI mental wellness companion.
 You are talking to someone who may be struggling with loneliness, depression, anxiety, grief, heavy emotional burdens, or personal challenges.
 
 ### Core Persona & Principles:
@@ -40,6 +40,78 @@ You are talking to someone who may be struggling with loneliness, depression, an
      [[MEMORY_SUGGESTION: brief neutral fact about user]]
    - Example: [[MEMORY_SUGGESTION: User is preparing for medical licensing exams]]
    - Do NOT propose memories for transient moods (e.g. "felt tired today"). Only for enduring context.`;
+
+// Personalization preferences collected during first-launch onboarding.
+// Only the derived age is sent by the client — never the raw birthday.
+const PROFILE_STYLES = {
+  warm: 'Warm and gentle: soft, patient, validating. Listen first and move slowly.',
+  friend: 'Like a close friend: natural and familiar, lightly warm, with gentle humour only when it fits.',
+  direct: 'Direct and practical: clear and honest, validate briefly, then offer concrete steps. Avoid platitudes.',
+};
+
+const PROFILE_LENGTHS = {
+  short: 'Keep replies short: 2-4 sentences unless safety or clarity genuinely needs more.',
+  balanced: 'Balanced length: enough to feel heard without a wall of text.',
+  deep: 'Deeper, reflective replies with room to explore when it helps; never an essay.',
+};
+
+const FOCUS_LABELS = {
+  anxiety: 'anxiety and panic',
+  mood: 'low mood and depression',
+  sleep: 'sleep difficulties',
+  relationships: 'relationships and family',
+  selfEsteem: 'self-esteem and self-worth',
+  grief: 'grief and loss',
+  stress: 'stress and burnout',
+  purpose: 'meaning, purpose and direction',
+};
+
+function buildProfileSection(profile) {
+  if (!profile || typeof profile !== 'object') return '';
+
+  const lines = [];
+  const name = typeof profile.name === 'string' ? profile.name.trim().slice(0, 60) : '';
+  if (name) {
+    lines.push(`- Preferred name: "${name}". Use it naturally and sparingly - a warm check-in now and then, never in every message.`);
+  }
+
+  const age = Number(profile.age);
+  if (Number.isFinite(age) && age >= 0 && age <= 120) {
+    lines.push(`- Age: ${Math.floor(age)}.`);
+    if (age < 18) {
+      lines.push('  They are a minor: keep language age-appropriate, avoid adult-only framing, and when distress is serious gently encourage them to involve a trusted adult, parent, or school counselor.');
+    } else if (age >= 65) {
+      lines.push('  Respect their life experience; do not patronize.');
+    }
+  }
+
+  if (PROFILE_STYLES[profile.style]) {
+    lines.push(`- Preferred tone: ${PROFILE_STYLES[profile.style]}`);
+  }
+  if (PROFILE_LENGTHS[profile.length]) {
+    lines.push(`- Reply length: ${PROFILE_LENGTHS[profile.length]}`);
+  }
+
+  if (Array.isArray(profile.focuses)) {
+    const labels = profile.focuses.map((f) => FOCUS_LABELS[f]).filter(Boolean);
+    if (labels.length > 0) {
+      lines.push(`- They asked for support with: ${labels.join(', ')}. Let this guide what you notice, without bringing it up constantly.`);
+    }
+  }
+
+  if (profile.in_therapy === true) {
+    lines.push('- They are currently seeing a therapist or counselor. Support that work; never position yourself as a replacement.');
+  }
+
+  const notes = typeof profile.notes === 'string' ? profile.notes.trim().slice(0, 300) : '';
+  if (notes) {
+    lines.push(`- In their own words: "${notes}"`);
+  }
+
+  if (lines.length === 0) return '';
+
+  return `\n### Personalization (self-reported during onboarding)\n${lines.join('\n')}\n\nFollow these preferences naturally. Never mention that you have a "profile" or recite these facts back. In acute distress, warmth and safety always come before style preferences.`;
+}
 
 const CLASSIFIER_SYSTEM_PROMPT = `You are a clinical crisis assessment safety system for a mental wellness app.
 Analyze the user's latest message and context to classify crisis risk level.
@@ -81,7 +153,7 @@ setInterval(() => {
 }, 5 * 60 * 1000);
 
 // Independent Server-Side Crisis Classifier
-async function classifyCrisis(latestMessage, history, lang) {
+async function classifyCrisis(latestMessage, history, lang, { delayMs = 0 } = {}) {
   try {
     const textToCheck = (latestMessage || '').trim();
     if (!textToCheck) return { is_crisis: false, risk_level: 'none' };
@@ -92,7 +164,16 @@ async function classifyCrisis(latestMessage, history, lang) {
       return { is_crisis: true, risk_level: 'severe', category: 'suicide_intent' };
     }
 
-    // Layer 2 Server-side LLM Classifier for subtle/implicit indicators
+    // Let the main reply get its first token out before the classifier call
+    // competes for provider capacity. The stream still waits for the result
+    // before closing, so the safety net is never skipped.
+    if (delayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+
+    // Layer 2 Server-side LLM Classifier for subtle/implicit indicators.
+    // The hard timeout guarantees a slow classifier can never keep the reply
+    // stream open indefinitely.
     const classifierRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -110,6 +191,7 @@ async function classifyCrisis(latestMessage, history, lang) {
         max_tokens: 250,
         temperature: 0.1,
       }),
+      signal: AbortSignal.timeout(6000),
     });
 
     if (classifierRes.ok) {
@@ -182,54 +264,72 @@ const server = http.createServer(async (req, res) => {
     }
 
     try {
-      const { messages = [], memories = [], lang = 'en' } = JSON.parse(body);
+      const { messages = [], memories = [], lang = 'en', profile = null } = JSON.parse(body);
       const isStreaming = req.url === '/chat/stream';
 
       const latestUserMsg = [...messages].reverse().find(m => m.role === 'user')?.content || '';
-      // Server-side crisis classification
-      const classification = await classifyCrisis(latestUserMsg, messages, lang);
+
+      // Kick off the safety classifier in parallel instead of blocking the
+      // reply on it. The result is awaited before the stream closes.
+      const classificationPromise = classifyCrisis(latestUserMsg, messages, lang, {
+        delayMs: isStreaming ? 500 : 0,
+      }).catch((err) => {
+        console.error('Classifier evaluation error:', err.message);
+        return { is_crisis: false, risk_level: 'none', category: 'none' };
+      });
 
       const memorySection = memories.length > 0
         ? `\nUser's Saved Memories (use only with care):\n${memories.map(m => `- ${m}`).join('\n')}`
         : '\nNo prior memories saved.';
 
-      const systemPromptWithContext = `${SYSTEM_PROMPT}\nUser interface language: ${lang}${memorySection}`;
+      const systemPromptWithContext = `${SYSTEM_PROMPT}\nUser interface language: ${lang}${buildProfileSection(profile)}${memorySection}`;
 
       const formattedMessages = [
         { role: 'system', content: systemPromptWithContext },
-        ...messages.map(m => ({
-          role: m.role === 'assistant' ? 'assistant' : 'user',
-          content: m.content || m.text || '',
-        })),
+        ...messages
+          .filter(m => (m.content || m.text || '').trim().length > 0)
+          .map(m => ({
+            role: m.role === 'assistant' ? 'assistant' : 'user',
+            content: m.content || m.text || '',
+          })),
       ];
 
       // Streaming branch
       if (isStreaming) {
+        // Flush headers right away so the client starts reading immediately,
+        // then open the model stream without waiting for the classifier.
         res.writeHead(200, {
           'Content-Type': 'text/event-stream',
           'Cache-Control': 'no-cache',
           'Connection': 'keep-alive',
+          'X-Accel-Buffering': 'no',
         });
+        if (res.socket) res.socket.setNoDelay(true);
+        res.flushHeaders();
+        res.write(': connected\n\n');
 
-        // Send classification header first
-        res.write(`data: ${JSON.stringify({ crisis: classification.is_crisis, risk_level: classification.risk_level })}\n\n`);
-
-        const llmStreamRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${API_KEY}`,
-            'HTTP-Referer': 'https://serene.app',
-            'X-Title': 'Serene Wellness Companion',
-          },
-          body: JSON.stringify({
-            model: MODEL,
-            messages: formattedMessages,
-            max_tokens: 800,
-            temperature: 0.7,
-            stream: true,
-          }),
-        });
+        let llmStreamRes;
+        try {
+          llmStreamRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${API_KEY}`,
+              'HTTP-Referer': 'https://serene.app',
+              'X-Title': 'Serene Wellness Companion',
+            },
+            body: JSON.stringify({
+              model: MODEL,
+              messages: formattedMessages,
+              max_tokens: 800,
+              temperature: 0.7,
+              stream: true,
+            }),
+          });
+        } catch (err) {
+          res.write(`data: ${JSON.stringify({ error: 'Upstream provider error' })}\n\n`);
+          return res.end();
+        }
 
         if (!llmStreamRes.ok) {
           res.write(`data: ${JSON.stringify({ error: 'Upstream provider error' })}\n\n`);
@@ -241,30 +341,36 @@ const server = http.createServer(async (req, res) => {
         let buffer = '';
         let fullReply = '';
 
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
 
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
 
-          for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed || trimmed.startsWith(':')) continue;
-            if (trimmed === 'data: [DONE]') continue;
-            if (trimmed.startsWith('data: ')) {
-              try {
-                const parsed = JSON.parse(trimmed.slice(6));
-                const token = parsed.choices?.[0]?.delta?.content || '';
-                if (token) {
-                  fullReply += token;
-                  // Stream token to client
-                  res.write(`data: ${JSON.stringify({ token })}\n\n`);
-                }
-              } catch (_) {}
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed || trimmed.startsWith(':')) continue;
+              if (trimmed === 'data: [DONE]') continue;
+              if (trimmed.startsWith('data: ')) {
+                try {
+                  const parsed = JSON.parse(trimmed.slice(6));
+                  const token = parsed.choices?.[0]?.delta?.content || '';
+                  if (token) {
+                    fullReply += token;
+                    // Stream token to client unless the client already left.
+                    if (!res.writableEnded) {
+                      res.write(`data: ${JSON.stringify({ token })}\n\n`);
+                    }
+                  }
+                } catch (_) {}
+              }
             }
           }
+        } catch (err) {
+          console.error('Stream interrupted:', err.message);
         }
 
         // Post-processing for memory suggestions and crisis token
@@ -274,13 +380,17 @@ const server = http.createServer(async (req, res) => {
           memorySuggestion = memoryMatch[1].trim();
         }
 
+        const classification = await classificationPromise;
         const modelTriggeredCrisis = fullReply.includes('[[CRISIS]]') || classification.is_crisis;
 
-        res.write(`data: ${JSON.stringify({
-          done: true,
-          crisis: modelTriggeredCrisis,
-          memory_suggestion: memorySuggestion,
-        })}\n\n`);
+        if (!res.writableEnded) {
+          res.write(`data: ${JSON.stringify({
+            done: true,
+            crisis: modelTriggeredCrisis,
+            risk_level: classification.risk_level,
+            memory_suggestion: memorySuggestion,
+          })}\n\n`);
+        }
 
         return res.end();
       }
@@ -317,6 +427,7 @@ const server = http.createServer(async (req, res) => {
         replyText = replyText.replace(/\[\[MEMORY_SUGGESTION:\s*[^\]]+\]\]/g, '').trim();
       }
 
+      const classification = await classificationPromise;
       const isCrisisDetected = classification.is_crisis || replyText.includes('[[CRISIS]]');
       if (replyText.includes('[[CRISIS]]')) {
         replyText = replyText.replace(/\[\[CRISIS\]\]/g, '').trim();
@@ -331,6 +442,10 @@ const server = http.createServer(async (req, res) => {
       }));
     } catch (err) {
       console.error('Server error:', err);
+      if (res.headersSent) {
+        // A streaming response already started; just close it cleanly.
+        return res.end();
+      }
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Internal server error' }));
     }

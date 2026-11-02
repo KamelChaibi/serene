@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Resources the release build must never discard.
+
+  Release builds are shrunk by R8, which removes assets that no XML/manifest
+  references. `ic_notification` is only referenced by name from Dart
+  (`AndroidInitializationSettings('ic_notification')`), so the shrinker used to
+  strip it. flutter_local_notifications then failed `initialize()` with
+  "The resource ic_notification could not be found", which aborted `main()`
+  before `runApp()` and left the app stuck on a blank launch screen.
+-->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@drawable/ic_notification" />

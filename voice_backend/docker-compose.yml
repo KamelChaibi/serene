@@ -1,0 +1,129 @@
+﻿# Serene self-hosted voice stack.
+#
+#   cp .env.example .env      # edit LIVEKIT_URL to your LAN/host address
+#   docker compose up -d --build
+#   docker compose exec ollama ollama pull qwen3:4b
+#   python scripts/download_models.py
+#
+# The GPU services use the NVIDIA container toolkit.  Remove the `deploy`
+# blocks (and the `x-gpu` anchor) to run a CPU-only, very slow setup.
+
+name: serene-voice
+
+x-gpu: &gpu
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: 1
+            capabilities: [gpu]
+
+services:
+  livekit:
+    image: livekit/livekit-server:v1.13.11
+    restart: unless-stopped
+    command: ["--config", "/etc/livekit.yaml"]
+    environment:
+      # No defaults on purpose: a published key/secret pair would let anyone
+      # mint a token LiveKit accepts. Compose stops with a clear message if
+      # either value is missing from .env.
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY:?set LIVEKIT_API_KEY in .env}: ${LIVEKIT_API_SECRET:?set LIVEKIT_API_SECRET in .env}"
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+      - "7882-7892:7882-7892/udp"
+
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    environment:
+      OLLAMA_KEEP_ALIVE: "${OLLAMA_KEEP_ALIVE:-10m}"
+      OLLAMA_NUM_PARALLEL: "${OLLAMA_NUM_PARALLEL:-1}"
+      OLLAMA_MAX_LOADED_MODELS: "${OLLAMA_MAX_LOADED_MODELS:-1}"
+    volumes:
+      - ollama:/root/.ollama
+    ports:
+      - "127.0.0.1:11434:11434"
+    <<: *gpu
+
+  stt:
+    build:
+      context: .
+      dockerfile: docker/stt.Dockerfile
+      args:
+        INSTALL_CUDA: "1"
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      STT_DOWNLOAD_ROOT: /models/faster-whisper
+    volumes:
+      - ./models:/models
+    ports:
+      - "127.0.0.1:8001:8001"
+    <<: *gpu
+
+  tts:
+    build:
+      context: .
+      dockerfile: docker/tts.Dockerfile
+      args:
+        TORCH_INDEX_URL: https://download.pytorch.org/whl/cu124
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      SERENE_MODELS_DIR: /models
+    volumes:
+      - ./models:/models
+      - hf-cache:/home/serene/.cache/huggingface
+    ports:
+      - "127.0.0.1:8002:8002"
+    <<: *gpu
+
+  agent:
+    build:
+      context: .
+      dockerfile: docker/agent.Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # The agent talks to LiveKit over the compose network; the phone uses
+      # the public LIVEKIT_URL from .env.
+      LIVEKIT_URL: ws://livekit:7880
+      OLLAMA_BASE_URL: http://ollama:11434/v1
+      STT_BASE_URL: http://stt:8001/v1
+      TTS_BASE_URL: http://tts:8002/v1
+      SERENE_PROMPT_FILE: /app/prompts/serene_friend.yaml
+      SERENE_ENV: "${SERENE_ENV:-prod}"
+    depends_on:
+      - livekit
+      - ollama
+      - stt
+      - tts
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      LIVEKIT_HTTP_URL: http://livekit:7880
+      OLLAMA_BASE_URL: http://ollama:11434/v1
+      STT_BASE_URL: http://stt:8001/v1
+      TTS_BASE_URL: http://tts:8002/v1
+      SERENE_DATA_DIR: /data
+    volumes:
+      - api-data:/data
+    ports:
+      - "8788:8788"
+    depends_on:
+      - livekit
+
+volumes:
+  ollama:
+  hf-cache:
+  api-data:
+

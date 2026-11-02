@@ -1,12 +1,20 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'chat_service.dart';
+import 'features.dart';
 import 'l10n.dart';
 import 'notification_service.dart';
+import 'onboarding.dart';
+import 'profile.dart';
+import 'responsive.dart';
 import 'safety.dart';
 import 'security_service.dart';
 import 'storage.dart';
+import 'theme_service.dart';
+import 'live_voice_call_screen.dart';
+import 'voice_settings.dart';
 import 'wellness.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -24,6 +32,9 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _shieldActive = false;
   String _selectedCountry = 'TN';
   Map<String, String>? _trustedContact;
+  Profile _profile = Profile.empty;
+  List<String> _memories = [];
+  bool _useMemories = true;
   StreamSubscription<ChatStreamChunk>? _currentStreamSub;
 
   @override
@@ -43,22 +54,34 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _loadPreferences() async {
     final c = await Store.country();
     final contact = await Store.trustedContact();
+    final profile = await Store.profile();
+    final useMem = await Store.useMem();
+    final memories = useMem ? await Store.memories() : <String>[];
     if (mounted) {
       setState(() {
         _selectedCountry = c;
         _trustedContact = contact;
+        _profile = profile;
+        _useMemories = useMem;
+        _memories = memories;
       });
     }
   }
 
-  void _scrollToBottom() {
+  void _scrollToBottom({bool animate = true}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
+      if (!_scrollController.hasClients) return;
+      final target = _scrollController.position.maxScrollExtent;
+      if (animate) {
         _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
+          target,
           duration: const Duration(milliseconds: 250),
           curve: Curves.easeOut,
         );
+      } else {
+        // Jumping avoids restarting an animation on every incoming token,
+        // which would otherwise make the text trail behind the scroll.
+        _scrollController.jumpTo(target);
       }
     });
   }
@@ -69,6 +92,23 @@ class _ChatScreenState extends State<ChatScreen> {
     if (mounted) {
       setState(() => _isBusy = false);
     }
+  }
+
+  Future<void> _startVoiceCall() async {
+    // A text reply in flight and a live call would interleave badly.
+    if (_isBusy) return;
+    final language = S.of(context).code;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => LiveVoiceCallScreen(
+          conversation: _messages,
+          profile: _profile,
+          memories: _useMemories ? _memories : const <String>[],
+          appLanguage: language,
+        ),
+      ),
+    );
+    if (mounted) setState(() {});
   }
 
   Future<void> _send([String? customText]) async {
@@ -92,8 +132,10 @@ class _ChatScreenState extends State<ChatScreen> {
     _scrollToBottom();
 
     try {
-      final memories = await Store.useMem() ? await Store.memories() : <String>[];
-      final stream = askStream(_messages, s.code, memories);
+      // Memories are cached at load time so sending never waits on secure
+      // storage before the first token can arrive.
+      final memories = _useMemories ? _memories : <String>[];
+      final stream = askStream(_messages, s.code, memories, profile: _profile);
 
       _currentStreamSub = stream.listen(
         (chunk) {
@@ -102,13 +144,14 @@ class _ChatScreenState extends State<ChatScreen> {
             setState(() {
               assistantMsg.text += chunk.token;
             });
-            _scrollToBottom();
+            _scrollToBottom(animate: false);
           }
           if (chunk.isCrisis) {
             _showCrisisModal(s);
           }
           if (chunk.isDone) {
-            if (chunk.memorySuggestion != null && chunk.memorySuggestion!.isNotEmpty) {
+            if (chunk.memorySuggestion != null &&
+                chunk.memorySuggestion!.isNotEmpty) {
               setState(() {
                 assistantMsg.memorySuggestion = chunk.memorySuggestion;
               });
@@ -181,16 +224,18 @@ class _ChatScreenState extends State<ChatScreen> {
                           color: Colors.red.withValues(alpha: 0.12),
                           shape: BoxShape.circle,
                         ),
-                        child: const Icon(Icons.emergency, color: Colors.red, size: 28),
+                        child: const Icon(Icons.emergency,
+                            color: Colors.red, size: 28),
                       ),
                       const SizedBox(width: 12),
                       Expanded(
                         child: Text(
                           s.t('crisisTitle'),
-                          style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                                fontWeight: FontWeight.bold,
-                                color: Colors.red[800],
-                              ),
+                          style:
+                              Theme.of(context).textTheme.titleLarge?.copyWith(
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.red[800],
+                                  ),
                         ),
                       ),
                     ],
@@ -198,7 +243,10 @@ class _ChatScreenState extends State<ChatScreen> {
                   const SizedBox(height: 12),
                   Text(
                     s.t('crisisSubtitle'),
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(height: 1.5),
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodyMedium
+                        ?.copyWith(height: 1.5),
                   ),
                   const SizedBox(height: 16),
 
@@ -216,7 +264,8 @@ class _ChatScreenState extends State<ChatScreen> {
                         trailing: FilledButton.icon(
                           icon: const Icon(Icons.phone),
                           label: Text(s.t('call')),
-                          onPressed: () => launchUrl(Uri.parse('tel:${_trustedContact!['phone']}')),
+                          onPressed: () => launchUrl(
+                              Uri.parse('tel:${_trustedContact!['phone']}')),
                         ),
                       ),
                     )
@@ -239,10 +288,13 @@ class _ChatScreenState extends State<ChatScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(
-                        s.t('selectCountry'),
-                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      Expanded(
+                        child: Text(
+                          s.t('selectCountry'),
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
                       ),
+                      const SizedBox(width: 8),
                       DropdownButton<String>(
                         value: _selectedCountry,
                         onChanged: (val) {
@@ -253,7 +305,8 @@ class _ChatScreenState extends State<ChatScreen> {
                           }
                         },
                         items: supportedCountries.entries.map((e) {
-                          return DropdownMenuItem(value: e.key, child: Text(e.value));
+                          return DropdownMenuItem(
+                              value: e.key, child: Text(e.value));
                         }).toList(),
                       ),
                     ],
@@ -265,7 +318,10 @@ class _ChatScreenState extends State<ChatScreen> {
                   ...list.map((h) => Card(
                         margin: const EdgeInsets.only(bottom: 10),
                         elevation: 0,
-                        color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                        color: Theme.of(context)
+                            .colorScheme
+                            .surfaceContainerHighest
+                            .withValues(alpha: 0.5),
                         child: Padding(
                           padding: const EdgeInsets.all(12),
                           child: Row(
@@ -276,14 +332,18 @@ class _ChatScreenState extends State<ChatScreen> {
                                   children: [
                                     Text(
                                       h.label,
-                                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                                      style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 15),
                                     ),
                                     if (h.description.isNotEmpty)
                                       Padding(
                                         padding: const EdgeInsets.only(top: 2),
                                         child: Text(
                                           h.description,
-                                          style: Theme.of(context).textTheme.bodySmall,
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .bodySmall,
                                         ),
                                       ),
                                     if (h.number.isNotEmpty)
@@ -292,7 +352,9 @@ class _ChatScreenState extends State<ChatScreen> {
                                         child: Text(
                                           h.number,
                                           style: TextStyle(
-                                            color: Theme.of(context).colorScheme.primary,
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .primary,
                                             fontWeight: FontWeight.bold,
                                             fontSize: 16,
                                           ),
@@ -310,7 +372,8 @@ class _ChatScreenState extends State<ChatScreen> {
                                 FilledButton.icon(
                                   icon: const Icon(Icons.phone, size: 18),
                                   label: Text(s.t('call')),
-                                  onPressed: () => launchUrl(Uri.parse('tel:${h.number}')),
+                                  onPressed: () =>
+                                      launchUrl(Uri.parse('tel:${h.number}')),
                                 ),
                             ],
                           ),
@@ -328,7 +391,20 @@ class _ChatScreenState extends State<ChatScreen> {
                       showModalBottomSheet(
                         context: context,
                         isScrollControlled: true,
-                        builder: (_) => const SizedBox(height: 480, child: BreatheScreen()),
+                        useSafeArea: true,
+                        backgroundColor: Theme.of(context).colorScheme.surface,
+                        shape: const RoundedRectangleBorder(
+                          borderRadius:
+                              BorderRadius.vertical(top: Radius.circular(24)),
+                        ),
+                        builder: (_) => const FractionallySizedBox(
+                          heightFactor: 0.88,
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.vertical(
+                                top: Radius.circular(24)),
+                            child: BreatheScreen(),
+                          ),
+                        ),
                       );
                     },
                   ),
@@ -402,13 +478,29 @@ class _ChatScreenState extends State<ChatScreen> {
                 color: theme.colorScheme.primary.withValues(alpha: 0.14),
                 shape: BoxShape.circle,
               ),
-              child: Icon(Icons.spa, size: 18, color: theme.colorScheme.primary),
+              child:
+                  Icon(Icons.spa, size: 18, color: theme.colorScheme.primary),
             ),
             const SizedBox(width: 8),
-            Text(s.t('title'), style: const TextStyle(fontWeight: FontWeight.bold)),
+            Flexible(
+              child: Text(
+                s.t('title'),
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
           ],
         ),
         actions: [
+          // Voice call: hands-free talking with Serene. Hidden while the
+          // self-hosted voice stack cannot run on the available hardware;
+          // flip `voiceCallsVisible` in features.dart to restore it.
+          if (voiceCallsVisible)
+            IconButton(
+              tooltip: s.t('voiceCall'),
+              icon: Icon(Icons.call_outlined, color: theme.colorScheme.primary),
+              onPressed: _startVoiceCall,
+            ),
           // Emergency Crisis Hotline Icon
           IconButton(
             tooltip: s.t('crisisTitle'),
@@ -446,7 +538,8 @@ class _ChatScreenState extends State<ChatScreen> {
           // Gentle non-clinical boundary disclaimer banner
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
+            color: theme.colorScheme.surfaceContainerHighest
+                .withValues(alpha: 0.4),
             child: Row(
               children: [
                 Expanded(
@@ -459,7 +552,8 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                Icon(Icons.info_outline, size: 16, color: theme.colorScheme.outline),
+                Icon(Icons.info_outline,
+                    size: 16, color: theme.colorScheme.outline),
               ],
             ),
           ),
@@ -476,18 +570,43 @@ class _ChatScreenState extends State<ChatScreen> {
                           Container(
                             padding: const EdgeInsets.all(18),
                             decoration: BoxDecoration(
-                              color: theme.colorScheme.primaryContainer.withValues(alpha: 0.3),
+                              color: theme.colorScheme.primaryContainer
+                                  .withValues(alpha: 0.3),
                               shape: BoxShape.circle,
                             ),
-                            child: Icon(Icons.favorite_border, size: 40, color: theme.colorScheme.primary),
+                            child: Icon(Icons.favorite_border,
+                                size: 40, color: theme.colorScheme.primary),
                           ),
                           const SizedBox(height: 16),
                           Text(
-                            s.t('tagline'),
-                            style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+                            _profile.trimmedName.isEmpty
+                                ? s.t('tagline')
+                                : s
+                                    .t('greetName')
+                                    .replaceAll('{name}', _profile.trimmedName),
+                            style: theme.textTheme.titleMedium
+                                ?.copyWith(fontWeight: FontWeight.w600),
                             textAlign: TextAlign.center,
                           ),
-                          const SizedBox(height: 24),
+                          if (_profile.trimmedName.isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              s.t('tagline'),
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
+                          if (voiceCallsVisible) ...[
+                            const SizedBox(height: 24),
+                            FilledButton.tonalIcon(
+                              onPressed: () => _startVoiceCall(),
+                              icon: const Icon(Icons.call_outlined, size: 18),
+                              label: Text(s.t('voiceCall')),
+                            ),
+                            const SizedBox(height: 16),
+                          ],
                           ActionChip(
                             label: Text(s.t('promptOverwhelmed')),
                             onPressed: () => _send(s.t('promptOverwhelmed')),
@@ -519,8 +638,9 @@ class _ChatScreenState extends State<ChatScreen> {
                       final m = _messages[i];
                       final isUser = m.role == 'user';
                       return Column(
-                        crossAxisAlignment:
-                            isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                        crossAxisAlignment: isUser
+                            ? CrossAxisAlignment.end
+                            : CrossAxisAlignment.start,
                         children: [
                           Align(
                             alignment: isUser
@@ -528,21 +648,26 @@ class _ChatScreenState extends State<ChatScreen> {
                                 : AlignmentDirectional.centerStart,
                             child: Container(
                               margin: const EdgeInsets.symmetric(vertical: 4),
-                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 16, vertical: 12),
                               constraints: BoxConstraints(
-                                maxWidth: MediaQuery.of(context).size.width * 0.82,
+                                maxWidth:
+                                    MediaQuery.of(context).size.width * 0.82,
                               ),
                               decoration: BoxDecoration(
                                 color: isUser
                                     ? theme.colorScheme.primaryContainer
-                                    : theme.colorScheme.secondaryContainer.withValues(alpha: 0.7),
+                                    : theme.colorScheme.secondaryContainer
+                                        .withValues(alpha: 0.7),
                                 borderRadius: BorderRadius.only(
                                   topLeft: const Radius.circular(18),
                                   topRight: const Radius.circular(18),
-                                  bottomLeft:
-                                      isUser ? const Radius.circular(18) : const Radius.circular(4),
-                                  bottomRight:
-                                      isUser ? const Radius.circular(4) : const Radius.circular(18),
+                                  bottomLeft: isUser
+                                      ? const Radius.circular(18)
+                                      : const Radius.circular(4),
+                                  bottomRight: isUser
+                                      ? const Radius.circular(4)
+                                      : const Radius.circular(18),
                                 ),
                               ),
                               child: Text(
@@ -567,13 +692,16 @@ class _ChatScreenState extends State<ChatScreen> {
                               margin: const EdgeInsets.only(top: 4, bottom: 8),
                               padding: const EdgeInsets.all(12),
                               constraints: BoxConstraints(
-                                maxWidth: MediaQuery.of(context).size.width * 0.85,
+                                maxWidth:
+                                    MediaQuery.of(context).size.width * 0.85,
                               ),
                               decoration: BoxDecoration(
-                                color: theme.colorScheme.primaryContainer.withValues(alpha: 0.35),
+                                color: theme.colorScheme.primaryContainer
+                                    .withValues(alpha: 0.35),
                                 borderRadius: BorderRadius.circular(16),
                                 border: Border.all(
-                                  color: theme.colorScheme.primary.withValues(alpha: 0.3),
+                                  color: theme.colorScheme.primary
+                                      .withValues(alpha: 0.3),
                                 ),
                               ),
                               child: Column(
@@ -582,12 +710,14 @@ class _ChatScreenState extends State<ChatScreen> {
                                   Row(
                                     children: [
                                       Icon(Icons.lightbulb_outline,
-                                          size: 18, color: theme.colorScheme.primary),
+                                          size: 18,
+                                          color: theme.colorScheme.primary),
                                       const SizedBox(width: 6),
                                       Expanded(
                                         child: Text(
                                           s.t('memorySuggestionTitle'),
-                                          style: theme.textTheme.labelMedium?.copyWith(
+                                          style: theme.textTheme.labelMedium
+                                              ?.copyWith(
                                             fontWeight: FontWeight.bold,
                                             color: theme.colorScheme.primary,
                                           ),
@@ -608,7 +738,8 @@ class _ChatScreenState extends State<ChatScreen> {
                                     children: [
                                       TextButton(
                                         onPressed: () {
-                                          setState(() => m.memorySuggestion = null);
+                                          setState(
+                                              () => m.memorySuggestion = null);
                                         },
                                         child: Text(s.t('dismiss')),
                                       ),
@@ -617,18 +748,23 @@ class _ChatScreenState extends State<ChatScreen> {
                                         icon: const Icon(Icons.check, size: 16),
                                         label: Text(s.t('remember')),
                                         onPressed: () async {
-                                          final messenger = ScaffoldMessenger.of(context);
-                                          final current = await Store.memories();
-                                          if (!current.contains(m.memorySuggestion!)) {
-                                            current.add(m.memorySuggestion!);
-                                            await Store.save(current);
+                                          final messenger =
+                                              ScaffoldMessenger.of(context);
+                                          final suggestion =
+                                              m.memorySuggestion!;
+                                          if (!_memories.contains(suggestion)) {
+                                            _memories.add(suggestion);
+                                            await Store.save(_memories);
                                           }
                                           if (mounted) {
-                                            setState(() => m.memorySuggestion = null);
+                                            setState(() =>
+                                                m.memorySuggestion = null);
                                             messenger.showSnackBar(
                                               SnackBar(
-                                                content: Text(s.t('memorySaved')),
-                                                duration: const Duration(seconds: 2),
+                                                content:
+                                                    Text(s.t('memorySaved')),
+                                                duration:
+                                                    const Duration(seconds: 2),
                                               ),
                                             );
                                           }
@@ -659,9 +795,12 @@ class _ChatScreenState extends State<ChatScreen> {
                   Text(s.t('thinking'), style: theme.textTheme.labelSmall),
                   const Spacer(),
                   TextButton.icon(
-                    style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
-                    icon: const Icon(Icons.stop_circle_outlined, size: 18, color: Colors.grey),
-                    label: Text(s.t('stopGenerating'), style: const TextStyle(color: Colors.grey)),
+                    style: TextButton.styleFrom(
+                        visualDensity: VisualDensity.compact),
+                    icon: const Icon(Icons.stop_circle_outlined,
+                        size: 18, color: Colors.grey),
+                    label: Text(s.t('stopGenerating'),
+                        style: const TextStyle(color: Colors.grey)),
                     onPressed: _stopGenerating,
                   ),
                 ],
@@ -694,9 +833,10 @@ class _ChatScreenState extends State<ChatScreen> {
                         hintText: s.t('hint'),
                         hintStyle: TextStyle(color: theme.colorScheme.outline),
                         filled: true,
-                        fillColor:
-                            theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        fillColor: theme.colorScheme.surfaceContainerHighest
+                            .withValues(alpha: 0.4),
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 12),
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(24),
                           borderSide: BorderSide.none,
@@ -738,11 +878,14 @@ class _MemorySettingsScreenState extends State<MemorySettingsScreen> {
   bool _useMemories = true;
   String _selectedCountry = 'TN';
   bool _hasTrustedContact = false;
+  Profile _profile = Profile.empty;
+  ThemeMode _themeMode = ThemeService.instance.mode;
 
   // Security Lock
   bool _hasPinLock = false;
   bool _biometricsEnabled = false;
   bool _canUseBiometrics = false;
+  bool _hasBiometricHardware = false;
 
   // Reminders
   bool _dailyReminderEnabled = false;
@@ -759,10 +902,10 @@ class _MemorySettingsScreenState extends State<MemorySettingsScreen> {
     final u = await Store.useMem();
     final c = await Store.country();
     final contact = await Store.trustedContact();
+    final profile = await Store.profile();
 
     final pinEnabled = await SecurityService.instance.isLockEnabled();
     final bioEnabled = await SecurityService.instance.isBiometricsEnabled();
-    final canBio = await SecurityService.instance.canUseBiometrics();
 
     final remEnabled = await NotificationService.instance.isReminderEnabled();
     final remTime = await NotificationService.instance.getReminderTime();
@@ -772,6 +915,7 @@ class _MemorySettingsScreenState extends State<MemorySettingsScreen> {
         _memories = m;
         _useMemories = u;
         _selectedCountry = c;
+        _profile = profile;
         if (contact != null) {
           _hasTrustedContact = true;
           _contactName.text = contact['name'] ?? '';
@@ -779,11 +923,59 @@ class _MemorySettingsScreenState extends State<MemorySettingsScreen> {
         }
         _hasPinLock = pinEnabled;
         _biometricsEnabled = bioEnabled;
-        _canUseBiometrics = canBio;
         _dailyReminderEnabled = remEnabled;
-        _reminderTime = TimeOfDay(hour: remTime['hour']!, minute: remTime['minute']!);
+        _reminderTime =
+            TimeOfDay(hour: remTime['hour']!, minute: remTime['minute']!);
       });
     }
+
+    // The biometric platform query can be slow, or never answer at all on some
+    // OEM builds. Resolve it after the rest of the screen is already usable so
+    // a stuck sensor can never hide the PIN or reminder settings.
+    final canBio = await SecurityService.instance.canUseBiometrics();
+    final hasBioHardware =
+        await SecurityService.instance.hasBiometricHardware();
+    if (mounted) {
+      setState(() {
+        _canUseBiometrics = canBio;
+        _hasBiometricHardware = hasBioHardware;
+      });
+    }
+  }
+
+  void _setTheme(ThemeMode mode) {
+    setState(() => _themeMode = mode);
+    ThemeService.instance.setMode(mode);
+  }
+
+  String _profileSummary(S s) {
+    final parts = <String>[];
+    if (_profile.trimmedName.isNotEmpty) parts.add(_profile.trimmedName);
+    final age = _profile.age;
+    if (age != null) parts.add(s.t('ageYears').replaceAll('{age}', '$age'));
+    switch (_profile.style) {
+      case Profile.styleFriend:
+        parts.add(s.t('styleFriend'));
+        break;
+      case Profile.styleDirect:
+        parts.add(s.t('styleDirect'));
+        break;
+      default:
+        parts.add(s.t('styleWarm'));
+    }
+    return parts.join(' · ');
+  }
+
+  Future<void> _editProfile() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (routeContext) => OnboardingScreen(
+          isEditing: true,
+          onDone: () => Navigator.of(routeContext).pop(),
+        ),
+      ),
+    );
+    if (mounted) _loadAll();
   }
 
   Future<void> _setupPinDialog(S s) async {
@@ -793,6 +985,7 @@ class _MemorySettingsScreenState extends State<MemorySettingsScreen> {
     await showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
+        scrollable: true,
         title: Text(s.t('enterNewPin')),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -803,6 +996,10 @@ class _MemorySettingsScreenState extends State<MemorySettingsScreen> {
               keyboardType: TextInputType.number,
               maxLength: 4,
               obscureText: true,
+              inputFormatters: [
+                FilteringTextInputFormatter.digitsOnly,
+                LengthLimitingTextInputFormatter(4),
+              ],
               decoration: InputDecoration(labelText: s.t('pinLock')),
             ),
             TextField(
@@ -810,12 +1007,17 @@ class _MemorySettingsScreenState extends State<MemorySettingsScreen> {
               keyboardType: TextInputType.number,
               maxLength: 4,
               obscureText: true,
+              inputFormatters: [
+                FilteringTextInputFormatter.digitsOnly,
+                LengthLimitingTextInputFormatter(4),
+              ],
               decoration: InputDecoration(labelText: s.t('confirmPin')),
             ),
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(s.t('cancel'))),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: Text(s.t('cancel'))),
           FilledButton(
             onPressed: () async {
               final p1 = pin1Ctrl.text.trim();
@@ -823,15 +1025,14 @@ class _MemorySettingsScreenState extends State<MemorySettingsScreen> {
               // Capture navigator and messenger before any await
               final nav = Navigator.of(ctx);
               final messenger = ScaffoldMessenger.of(context);
-              if (p1.length == 4 && p1 == p2) {
+              if (RegExp(r'^\d{4}$').hasMatch(p1) && p1 == p2) {
                 await SecurityService.instance.setupPin(p1);
-                if (mounted) {
-                  nav.pop();
-                  _loadAll();
-                  messenger.showSnackBar(
-                    SnackBar(content: Text(s.t('pinSetSuccess'))),
-                  );
-                }
+                if (!mounted) return;
+                nav.pop();
+                await _loadAll();
+                messenger.showSnackBar(
+                  SnackBar(content: Text(s.t('pinSetSuccess'))),
+                );
               } else {
                 messenger.showSnackBar(
                   SnackBar(content: Text(s.t('pinMismatch'))),
@@ -855,25 +1056,66 @@ class _MemorySettingsScreenState extends State<MemorySettingsScreen> {
     }
   }
 
+  /// Biometric unlock is only switched on after the device actually proves it
+  /// can authenticate. Otherwise the lock screen would offer a button that can
+  /// never unlock the app.
+  Future<void> _toggleBiometrics(bool enabled, S s) async {
+    final messenger = ScaffoldMessenger.of(context);
+    if (!enabled) {
+      await SecurityService.instance.setBiometricsEnabled(false);
+      if (mounted) await _loadAll();
+      return;
+    }
+
+    final ok = await SecurityService.instance.verifyBiometrics(
+      reason: s.t('biometricsPrompt'),
+    );
+    if (!mounted) return;
+    if (!ok) {
+      messenger.showSnackBar(
+        SnackBar(content: Text(s.t('biometricsFailed'))),
+      );
+      return;
+    }
+    await SecurityService.instance.setBiometricsEnabled(true);
+    if (mounted) await _loadAll();
+  }
+
   Future<void> _toggleDailyReminder(bool enabled, S s) async {
+    final messenger = ScaffoldMessenger.of(context);
     if (enabled) {
       final granted = await NotificationService.instance.requestPermission();
-      if (!granted && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Please enable notifications in phone settings.')),
+      if (!mounted) return;
+      if (!granted) {
+        messenger.showSnackBar(
+          SnackBar(content: Text(s.t('notificationsBlocked'))),
         );
         return;
       }
-      await NotificationService.instance.scheduleDailyCheckIn(
-        hour: _reminderTime.hour,
-        minute: _reminderTime.minute,
-        title: s.t('title'),
-        body: s.t('tagline'),
-      );
+      try {
+        await NotificationService.instance.scheduleDailyCheckIn(
+          hour: _reminderTime.hour,
+          minute: _reminderTime.minute,
+          title: s.t('title'),
+          body: s.t('tagline'),
+        );
+      } catch (_) {
+        // Do not flip the switch on if nothing was actually scheduled.
+        if (mounted) {
+          messenger.showSnackBar(
+            SnackBar(content: Text(s.t('notificationsFailed'))),
+          );
+        }
+        return;
+      }
     } else {
-      await NotificationService.instance.cancelAll();
+      try {
+        await NotificationService.instance.cancelAll();
+      } catch (_) {
+        // The switch still reflects the user's intent for this session.
+      }
     }
-    _loadAll();
+    if (mounted) await _loadAll();
   }
 
   Future<void> _pickReminderTime(S s) async {
@@ -881,15 +1123,23 @@ class _MemorySettingsScreenState extends State<MemorySettingsScreen> {
       context: context,
       initialTime: _reminderTime,
     );
-    if (picked != null) {
-      setState(() => _reminderTime = picked);
-      if (_dailyReminderEnabled) {
+    if (picked == null || !mounted) return;
+    setState(() => _reminderTime = picked);
+    if (_dailyReminderEnabled) {
+      final messenger = ScaffoldMessenger.of(context);
+      try {
         await NotificationService.instance.scheduleDailyCheckIn(
           hour: picked.hour,
           minute: picked.minute,
           title: s.t('title'),
           body: s.t('tagline'),
         );
+      } catch (_) {
+        if (mounted) {
+          messenger.showSnackBar(
+            SnackBar(content: Text(s.t('notificationsFailed'))),
+          );
+        }
       }
     }
   }
@@ -901,7 +1151,8 @@ class _MemorySettingsScreenState extends State<MemorySettingsScreen> {
       await Store.setTrustedContact(name, phone);
       setState(() => _hasTrustedContact = true);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(s.t('saveContact'))));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(s.t('saveContact'))));
       }
     }
   }
@@ -912,7 +1163,8 @@ class _MemorySettingsScreenState extends State<MemorySettingsScreen> {
     _contactPhone.clear();
     setState(() => _hasTrustedContact = false);
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(s.t('removeContact'))));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(s.t('removeContact'))));
     }
   }
 
@@ -923,7 +1175,9 @@ class _MemorySettingsScreenState extends State<MemorySettingsScreen> {
         title: Text(s.t('wipe')),
         content: Text(s.t('wipeConfirm')),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(s.t('cancel'))),
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text(s.t('cancel'))),
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: Colors.red),
             onPressed: () => Navigator.pop(context, true),
@@ -936,16 +1190,23 @@ class _MemorySettingsScreenState extends State<MemorySettingsScreen> {
     if (confirmed == true) {
       await Store.wipe();
       await SecurityService.instance.removePin();
+      try {
+        await NotificationService.instance.cancelAll();
+      } catch (_) {
+        // Nothing scheduled, or notifications are unavailable.
+      }
       setState(() {
         _memories = [];
         _hasTrustedContact = false;
         _contactName.clear();
         _contactPhone.clear();
         _hasPinLock = false;
+        _biometricsEnabled = false;
+        _dailyReminderEnabled = false;
       });
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(s.t('empty'))),
+          SnackBar(content: Text(s.t('wipeDone'))),
         );
       }
     }
@@ -966,319 +1227,548 @@ class _MemorySettingsScreenState extends State<MemorySettingsScreen> {
 
     return Scaffold(
       appBar: AppBar(title: Text(s.t('settings'))),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          // 1. PIN & Biometrics Security Section
-          Card(
-            elevation: 0,
-            color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(Icons.lock_outline, color: theme.colorScheme.primary),
-                      const SizedBox(width: 8),
-                      Text(
-                        s.t('securityLock'),
-                        style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+      body: Responsive.centered(
+        maxWidth: 760,
+        child: ListView(
+          padding: EdgeInsets.all(Responsive.of(context, 16)),
+          children: [
+            // 0. Personal profile collected during onboarding
+            Card(
+              elevation: 0,
+              color: theme.colorScheme.surfaceContainerHighest
+                  .withValues(alpha: 0.4),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.person_outline,
+                            color: theme.colorScheme.primary),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            s.t('profileCardTitle'),
+                            style: theme.textTheme.titleMedium
+                                ?.copyWith(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text(s.t('profileCardDesc'),
+                        style: theme.textTheme.bodySmall),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            _profileSummary(s),
+                            style: theme.textTheme.titleSmall
+                                ?.copyWith(fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                        TextButton.icon(
+                          icon: const Icon(Icons.edit_outlined, size: 18),
+                          label: Text(s.t('editProfile')),
+                          onPressed: _editProfile,
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            // Appearance: system, light, or dark
+            Card(
+              elevation: 0,
+              color: theme.colorScheme.surfaceContainerHighest
+                  .withValues(alpha: 0.4),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.brightness_6_outlined,
+                            color: theme.colorScheme.primary),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            s.t('appearance'),
+                            style: theme.textTheme.titleMedium
+                                ?.copyWith(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text(s.t('appearanceDesc'),
+                        style: theme.textTheme.bodySmall),
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        ChoiceChip(
+                          avatar: Icon(
+                            Icons.brightness_auto_outlined,
+                            size: 18,
+                            color: _themeMode == ThemeMode.system
+                                ? theme.colorScheme.primary
+                                : null,
+                          ),
+                          label: Text(s.t('themeSystem')),
+                          selected: _themeMode == ThemeMode.system,
+                          onSelected: (_) => _setTheme(ThemeMode.system),
+                        ),
+                        ChoiceChip(
+                          avatar: Icon(
+                            Icons.light_mode_outlined,
+                            size: 18,
+                            color: _themeMode == ThemeMode.light
+                                ? theme.colorScheme.primary
+                                : null,
+                          ),
+                          label: Text(s.t('themeLight')),
+                          selected: _themeMode == ThemeMode.light,
+                          onSelected: (_) => _setTheme(ThemeMode.light),
+                        ),
+                        ChoiceChip(
+                          avatar: Icon(
+                            Icons.dark_mode_outlined,
+                            size: 18,
+                            color: _themeMode == ThemeMode.dark
+                                ? theme.colorScheme.primary
+                                : null,
+                          ),
+                          label: Text(s.t('themeDark')),
+                          selected: _themeMode == ThemeMode.dark,
+                          onSelected: (_) => _setTheme(ThemeMode.dark),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            if (voiceCallsVisible) ...[
+              const SizedBox(height: 16),
+
+              // Voice call configuration (self-hosted server, language, captions)
+              Card(
+                elevation: 0,
+                color: theme.colorScheme.surfaceContainerHighest
+                    .withValues(alpha: 0.4),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16)),
+                child: ListTile(
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                  leading: Icon(
+                    Icons.call_outlined,
+                    color: theme.colorScheme.primary,
+                  ),
+                  title: Text(
+                    s.t('voiceSettings'),
+                    style: theme.textTheme.titleMedium
+                        ?.copyWith(fontWeight: FontWeight.bold),
+                  ),
+                  subtitle: Text(
+                    s.t('voiceServerUrlDesc'),
+                    style: theme.textTheme.bodySmall,
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const VoiceSettingsScreen(),
+                    ),
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 16),
+            ],
+
+            // 1. PIN & Biometrics Security Section
+            Card(
+              elevation: 0,
+              color: theme.colorScheme.surfaceContainerHighest
+                  .withValues(alpha: 0.4),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.lock_outline,
+                            color: theme.colorScheme.primary),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            s.t('securityLock'),
+                            style: theme.textTheme.titleMedium
+                                ?.copyWith(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text(s.t('securityDesc'), style: theme.textTheme.bodySmall),
+                    const SizedBox(height: 12),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(s.t('pinLock'),
+                          style: const TextStyle(fontWeight: FontWeight.w600)),
+                      subtitle: Text(
+                          _hasPinLock ? s.t('pinActive') : s.t('pinDisabled')),
+                      trailing: _hasPinLock
+                          ? Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                TextButton(
+                                  onPressed: () => _setupPinDialog(s),
+                                  child: Text(s.t('changePin')),
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.delete_outline,
+                                      color: Colors.redAccent),
+                                  onPressed: () => _removePin(s),
+                                ),
+                              ],
+                            )
+                          : FilledButton.tonal(
+                              onPressed: () => _setupPinDialog(s),
+                              child: Text(s.t('enablePin')),
+                            ),
+                    ),
+                    if (_hasPinLock) ...[
+                      const Divider(),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(s.t('biometrics')),
+                        subtitle: Text(
+                          !_hasBiometricHardware
+                              ? s.t('biometricsUnavailable')
+                              : !_canUseBiometrics
+                                  ? s.t('biometricsNotEnrolled')
+                                  : s.t('biometricsDesc'),
+                        ),
+                        value: _biometricsEnabled,
+                        onChanged: _canUseBiometrics
+                            ? (v) => _toggleBiometrics(v, s)
+                            : null,
                       ),
                     ],
-                  ),
-                  const SizedBox(height: 6),
-                  Text(s.t('securityDesc'), style: theme.textTheme.bodySmall),
-                  const SizedBox(height: 12),
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: Text(s.t('pinLock'), style: const TextStyle(fontWeight: FontWeight.w600)),
-                    subtitle: Text(_hasPinLock ? 'Active' : 'Disabled'),
-                    trailing: _hasPinLock
-                        ? Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              TextButton(
-                                onPressed: () => _setupPinDialog(s),
-                                child: Text(s.t('changePin')),
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
-                                onPressed: () => _removePin(s),
-                              ),
-                            ],
-                          )
-                        : FilledButton.tonal(
-                            onPressed: () => _setupPinDialog(s),
-                            child: Text(s.t('enablePin')),
+                  ],
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            // 2. Mindful Daily Reminders & Notifications
+            Card(
+              elevation: 0,
+              color: theme.colorScheme.surfaceContainerHighest
+                  .withValues(alpha: 0.4),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.notifications_active_outlined,
+                            color: theme.colorScheme.primary),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            s.t('reminders'),
+                            style: theme.textTheme.titleMedium
+                                ?.copyWith(fontWeight: FontWeight.bold),
                           ),
-                  ),
-                  if (_hasPinLock && _canUseBiometrics) ...[
-                    const Divider(),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text(s.t('remindersDesc'),
+                        style: theme.textTheme.bodySmall),
+                    const SizedBox(height: 12),
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
-                      title: Text(s.t('biometrics')),
-                      subtitle: Text(s.t('biometricsDesc')),
-                      value: _biometricsEnabled,
-                      onChanged: (v) async {
-                        await SecurityService.instance.setBiometricsEnabled(v);
-                        _loadAll();
+                      title: Text(s.t('dailyReminder')),
+                      value: _dailyReminderEnabled,
+                      onChanged: (v) => _toggleDailyReminder(v, s),
+                    ),
+                    if (_dailyReminderEnabled) ...[
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(s.t('reminderTime')),
+                        trailing: TextButton.icon(
+                          icon: const Icon(Icons.access_time),
+                          label: Text(_reminderTime.format(context)),
+                          onPressed: () => _pickReminderTime(s),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      icon: const Icon(Icons.send),
+                      label: Text(s.t('testNotification')),
+                      onPressed: () async {
+                        final messenger = ScaffoldMessenger.of(context);
+                        final granted = await NotificationService.instance
+                            .requestPermission();
+                        if (!mounted) return;
+                        if (!granted) {
+                          messenger.showSnackBar(
+                            SnackBar(
+                                content: Text(s.t('notificationsBlocked'))),
+                          );
+                          return;
+                        }
+                        try {
+                          await NotificationService.instance.showInstantCheckIn(
+                            title: s.t('title'),
+                            body: s.t('tagline'),
+                          );
+                        } catch (_) {
+                          if (mounted) {
+                            messenger.showSnackBar(
+                              SnackBar(
+                                  content: Text(s.t('notificationsFailed'))),
+                            );
+                          }
+                          return;
+                        }
+                        if (mounted) {
+                          messenger.showSnackBar(
+                            SnackBar(content: Text(s.t('notificationSent'))),
+                          );
+                        }
                       },
                     ),
                   ],
-                ],
+                ),
               ),
             ),
-          ),
 
-          const SizedBox(height: 16),
+            const SizedBox(height: 16),
 
-          // 2. Mindful Daily Reminders & Notifications
-          Card(
-            elevation: 0,
-            color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(Icons.notifications_active_outlined, color: theme.colorScheme.primary),
-                      const SizedBox(width: 8),
-                      Text(
-                        s.t('reminders'),
-                        style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  Text(s.t('remindersDesc'), style: theme.textTheme.bodySmall),
-                  const SizedBox(height: 12),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: Text(s.t('dailyReminder')),
-                    value: _dailyReminderEnabled,
-                    onChanged: (v) => _toggleDailyReminder(v, s),
-                  ),
-                  if (_dailyReminderEnabled) ...[
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(s.t('reminderTime')),
-                      trailing: TextButton.icon(
-                        icon: const Icon(Icons.access_time),
-                        label: Text(_reminderTime.format(context)),
-                        onPressed: () => _pickReminderTime(s),
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 8),
-                  OutlinedButton.icon(
-                    icon: const Icon(Icons.send),
-                    label: Text(s.t('testNotification')),
-                    onPressed: () async {
-                      final messenger = ScaffoldMessenger.of(context);
-                      await NotificationService.instance.showInstantCheckIn(
-                        title: s.t('title'),
-                        body: s.t('tagline'),
-                      );
-                      if (mounted) {
-                        messenger.showSnackBar(
-                          SnackBar(content: Text(s.t('notificationSent'))),
-                        );
-                      }
-                    },
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-          const SizedBox(height: 16),
-
-          // 3. Emergency Trusted Contact Section
-          Card(
-            elevation: 0,
-            color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const Icon(Icons.emergency_outlined, color: Colors.redAccent),
-                      const SizedBox(width: 8),
-                      Text(
-                        s.t('trustedTitle'),
-                        style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  Text(s.t('trustedDesc'), style: theme.textTheme.bodySmall),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _contactName,
-                    decoration: InputDecoration(
-                      labelText: s.t('contactName'),
-                      border: const OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: _contactPhone,
-                    keyboardType: TextInputType.phone,
-                    decoration: InputDecoration(
-                      labelText: s.t('contactPhone'),
-                      border: const OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: FilledButton.tonal(
-                          onPressed: () => _saveContact(s),
-                          child: Text(s.t('saveContact')),
-                        ),
-                      ),
-                      if (_hasTrustedContact) ...[
+            // 3. Emergency Trusted Contact Section
+            Card(
+              elevation: 0,
+              color: theme.colorScheme.surfaceContainerHighest
+                  .withValues(alpha: 0.4),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.emergency_outlined,
+                            color: Colors.redAccent),
                         const SizedBox(width: 8),
-                        IconButton(
-                          icon: const Icon(Icons.delete_outline, color: Colors.red),
-                          onPressed: () => _removeContact(s),
+                        Expanded(
+                          child: Text(
+                            s.t('trustedTitle'),
+                            style: theme.textTheme.titleMedium
+                                ?.copyWith(fontWeight: FontWeight.bold),
+                          ),
                         ),
                       ],
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-          const SizedBox(height: 16),
-
-          // 4. Country Hotline Preference
-          Card(
-            elevation: 0,
-            color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    s.t('selectCountry'),
-                    style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 8),
-                  DropdownButton<String>(
-                    value: _selectedCountry,
-                    isExpanded: true,
-                    onChanged: (val) {
-                      if (val != null) {
-                        setState(() => _selectedCountry = val);
-                        Store.setCountry(val);
-                      }
-                    },
-                    items: supportedCountries.entries.map((e) {
-                      return DropdownMenuItem(value: e.key, child: Text(e.value));
-                    }).toList(),
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-          const SizedBox(height: 16),
-
-          // 5. Memory Management
-          Card(
-            elevation: 0,
-            color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    s.t('memories'),
-                    style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-                  ),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: Text(s.t('useMem'), style: theme.textTheme.bodyMedium),
-                    value: _useMemories,
-                    onChanged: (v) {
-                      setState(() => _useMemories = v);
-                      Store.setUseMem(v);
-                    },
-                  ),
-                  TextField(
-                    controller: _memoryInput,
-                    decoration: InputDecoration(
-                      hintText: s.t('memHint'),
-                      suffixIcon: IconButton(
-                        icon: const Icon(Icons.add),
-                        onPressed: () async {
-                          final text = _memoryInput.text.trim();
-                          if (text.isNotEmpty) {
-                            _memories.add(text);
-                            _memoryInput.clear();
-                            await Store.save(_memories);
-                            setState(() {});
-                          }
-                        },
+                    ),
+                    const SizedBox(height: 6),
+                    Text(s.t('trustedDesc'), style: theme.textTheme.bodySmall),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _contactName,
+                      decoration: InputDecoration(
+                        labelText: s.t('contactName'),
+                        border: const OutlineInputBorder(),
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 12),
-                  if (_memories.isEmpty)
-                    Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Text(s.t('empty'), style: theme.textTheme.bodySmall),
-                    )
-                  else
-                    for (var i = 0; i < _memories.length; i++)
-                      ListTile(
-                        dense: true,
-                        contentPadding: EdgeInsets.zero,
-                        title: Text(_memories[i]),
-                        trailing: IconButton(
-                          icon: const Icon(Icons.close, size: 18),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: _contactPhone,
+                      keyboardType: TextInputType.phone,
+                      decoration: InputDecoration(
+                        labelText: s.t('contactPhone'),
+                        border: const OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: FilledButton.tonal(
+                            onPressed: () => _saveContact(s),
+                            child: Text(s.t('saveContact')),
+                          ),
+                        ),
+                        if (_hasTrustedContact) ...[
+                          const SizedBox(width: 8),
+                          IconButton(
+                            icon: const Icon(Icons.delete_outline,
+                                color: Colors.red),
+                            onPressed: () => _removeContact(s),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            // 4. Country Hotline Preference
+            Card(
+              elevation: 0,
+              color: theme.colorScheme.surfaceContainerHighest
+                  .withValues(alpha: 0.4),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      s.t('selectCountry'),
+                      style: theme.textTheme.titleMedium
+                          ?.copyWith(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButton<String>(
+                      value: _selectedCountry,
+                      isExpanded: true,
+                      onChanged: (val) {
+                        if (val != null) {
+                          setState(() => _selectedCountry = val);
+                          Store.setCountry(val);
+                        }
+                      },
+                      items: supportedCountries.entries.map((e) {
+                        return DropdownMenuItem(
+                            value: e.key, child: Text(e.value));
+                      }).toList(),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            // 5. Memory Management
+            Card(
+              elevation: 0,
+              color: theme.colorScheme.surfaceContainerHighest
+                  .withValues(alpha: 0.4),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      s.t('memories'),
+                      style: theme.textTheme.titleMedium
+                          ?.copyWith(fontWeight: FontWeight.bold),
+                    ),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(s.t('useMem'),
+                          style: theme.textTheme.bodyMedium),
+                      value: _useMemories,
+                      onChanged: (v) {
+                        setState(() => _useMemories = v);
+                        Store.setUseMem(v);
+                      },
+                    ),
+                    TextField(
+                      controller: _memoryInput,
+                      decoration: InputDecoration(
+                        hintText: s.t('memHint'),
+                        suffixIcon: IconButton(
+                          icon: const Icon(Icons.add),
                           onPressed: () async {
-                            _memories.removeAt(i);
-                            await Store.save(_memories);
-                            setState(() {});
+                            final text = _memoryInput.text.trim();
+                            if (text.isNotEmpty) {
+                              _memories.add(text);
+                              _memoryInput.clear();
+                              await Store.save(_memories);
+                              setState(() {});
+                            }
                           },
                         ),
                       ),
-                ],
+                    ),
+                    const SizedBox(height: 12),
+                    if (_memories.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Text(s.t('empty'),
+                            style: theme.textTheme.bodySmall),
+                      )
+                    else
+                      for (var i = 0; i < _memories.length; i++)
+                        ListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          title: Text(_memories[i]),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.close, size: 18),
+                            onPressed: () async {
+                              _memories.removeAt(i);
+                              await Store.save(_memories);
+                              setState(() {});
+                            },
+                          ),
+                        ),
+                  ],
+                ),
               ),
             ),
-          ),
 
-          const SizedBox(height: 24),
+            const SizedBox(height: 24),
 
-          // Complete wipe button
-          OutlinedButton.icon(
-            style: OutlinedButton.styleFrom(
-              foregroundColor: Colors.red,
-              side: const BorderSide(color: Colors.red),
-              padding: const EdgeInsets.symmetric(vertical: 14),
+            // Complete wipe button
+            OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.red,
+                side: const BorderSide(color: Colors.red),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+              ),
+              icon: const Icon(Icons.delete_forever),
+              label: Text(s.t('wipe')),
+              onPressed: () => _wipeData(s),
             ),
-            icon: const Icon(Icons.delete_forever),
-            label: Text(s.t('wipe')),
-            onPressed: () => _wipeData(s),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

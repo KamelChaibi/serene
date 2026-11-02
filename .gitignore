@@ -4,3 +4,12 @@ build/
 *.iml
 android/local.properties
 backend/node_modules/
+
+# Local secrets, weights and runtime state — never commit.
+voice_backend/.env
+voice_backend/data/
+voice_backend/models/
+voice_backend/smoke-audio/
+__pycache__/
+.pytest_cache/
+*.pyc

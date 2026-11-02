@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Matches the first frame of the in-app Serene splash, so the handoff
+         from the native launch screen feels seamless. -->
+    <color name="launch_background">#F4F8F5</color>
+    <!-- Serene Sage & Sea, used behind the spa mark in the launcher icon. -->
+    <color name="ic_launcher_background">#356B60</color>
+</resources>

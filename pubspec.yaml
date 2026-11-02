@@ -3,7 +3,7 @@ description: Free, private AI wellness companion (ar/fr/en).
 publish_to: none
 version: 0.1.0+1
 environment:
-  sdk: ">=3.3.0 <4.0.0"
+  sdk: ">=3.4.0 <4.0.0"
 dependencies:
   flutter:
     sdk: flutter
@@ -16,6 +16,15 @@ dependencies:
   flutter_local_notifications: ^22.3.3
   crypto: ^3.0.8
   timezone: ^0.11.0
+  # Live AI voice calls. Audio travels over WebRTC to a self-hosted LiveKit
+  # server; the Flutter app only ever receives a short-lived participant token.
+  livekit_client: ^2.13.2
+  # Pinned to the 12.x line on purpose. permission_handler 13.x pulls
+  # permission_handler_android 14.x, whose Gradle script requires AGP 9 and
+  # Kotlin 2.3 (it relies on AGP's built-in Kotlin). This project builds with
+  # AGP 8.11 and Kotlin 2.2, so 12.0.3 is the newest release that compiles here.
+  permission_handler: 12.0.3
+  audioplayers: ^6.7.1
 
 dev_dependencies:
   flutter_test:
@@ -24,3 +33,5 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/audio/

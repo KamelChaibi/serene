@@ -1,0 +1,35 @@
+# LiveKit server configuration for a self-hosted Serene deployment.
+#
+# `keys` is replaced by the LIVEKIT_KEYS environment variable in
+# docker-compose.yml.  If you run the binary directly, uncomment and edit:
+#
+# keys:
+#   devkey: change-me-please-use-a-long-random-string
+
+port: 7880
+bind_addresses:
+  - ""
+
+rtc:
+  tcp_port: 7881
+  port_range_start: 7882
+  port_range_end: 7892
+  # LAN deployment: pin the address clients should reach instead of letting
+  # LiveKit probe for a public IP.  Change this to your host's LAN address and
+  # keep it in sync with LIVEKIT_URL in .env.  For internet use set
+  # use_external_ip back to true and remove node_ip.
+  use_external_ip: false
+  node_ip: 192.168.1.17
+
+room:
+  auto_create: true
+  empty_timeout: 60
+  departure_timeout: 20
+  max_participants: 4
+
+turn:
+  enabled: false
+
+logging:
+  level: info
+  json: false
