@@ -311,6 +311,18 @@ Git) and keep the real key there. If a key was ever committed or shipped in an
 APK, rotate it: deleting it from the current file does not remove it from Git
 history or from previously distributed builds.
 
+A lightweight guard is included to stop new keys from being committed:
+
+```bash
+python scripts/check_secrets.py
+git config core.hooksPath .githooks   # optional: run it before every commit
+```
+
+On macOS/Linux, also make the hook executable with
+`chmod +x .githooks/pre-commit`. The scan covers text files only; it does not
+inspect Git history or binaries, so it will not find a key that is already in
+an old commit or APK.
+
 ---
 
 ## ✅ Tested vs. untested (honest report)

@@ -1,0 +1,15 @@
+#!/bin/sh
+# Block commits that contain credential-looking strings in source files.
+# Enable once with: git config core.hooksPath .githooks
+set -e
+
+if command -v python >/dev/null 2>&1; then
+  PYTHON=python
+elif command -v python3 >/dev/null 2>&1; then
+  PYTHON=python3
+else
+  echo "check-secrets: python is required to run the pre-commit guard" >&2
+  exit 1
+fi
+
+exec "$PYTHON" scripts/check_secrets.py

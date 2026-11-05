@@ -1,16 +1,54 @@
+# Build outputs and tool state
 build/
 .dart_tool/
 .idea/
 *.iml
 android/local.properties
-backend/node_modules/
-
-# Local secrets, weights and runtime state — never commit.
-backend/.env
-voice_backend/.env
-voice_backend/data/
-voice_backend/models/
-voice_backend/smoke-audio/
+node_modules/
 __pycache__/
 .pytest_cache/
 *.pyc
+*.pyo
+*.dill
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# Environment files — only the checked-in examples belong in Git.
+.env
+.env.*
+!.env.example
+!**/.env.example
+.envrc
+
+# Local secrets and signing material — never commit.
+backend/.env
+voice_backend/.env
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+key.properties
+android/key.properties
+*.mobileprovision
+
+# Release binaries: build them from clean source and publish them as release
+# assets instead of committing them. Already-tracked files stay tracked; use
+# `git rm --cached <file>` if one contains a secret.
+*.apk
+*.aab
+*.ipa
+
+# Local runtime data and model weights.
+voice_backend/data/
+voice_backend/models/
+voice_backend/smoke-audio/
+voice_backend/.venv/
+.venv/
+venv/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.log
